@@ -3,15 +3,9 @@
 #include <WiFiClient.h>
 #include <ESP8266HTTPClient.h>
 #include <ESP8266WebServer.h>
+#include "credentials.h"
 
 #define NUM_LEDS 58
-#ifndef STASSID
-#define STASSID "SSID"
-#define STAPSK  "PASSWORD"
-#endif
-
-const char* ssid = STASSID;
-const char* password = STAPSK;
 
 int s = 0;
 int h = 20;
@@ -65,8 +59,6 @@ void loop() {
   if (m == 60) {
     m = 0;
     h++;
-    // the timer is not very precise so refresh time every hour
-    getInternetTime();
   }
   if (h == 24) {
     h = 0;
@@ -154,14 +146,14 @@ void digitAt(int position, int digit[]) {
 }
 
 void connectWifi() {
-  WiFi.begin(ssid, password);
+  WiFi.begin(STASSID, STAPSK);
   WiFi.mode(WIFI_STA);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
   Serial.print("Connected to ");
-  Serial.println(ssid);
+  Serial.println(STASSID);
   Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
 }
