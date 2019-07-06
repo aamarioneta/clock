@@ -4,12 +4,16 @@
 #include <ESP8266HTTPClient.h>
 #include <ESP8266WebServer.h>
 #include "credentials.h"
+#include <Wire.h>
+#include <RtcDS3231.h>
 
 #define NUM_LEDS 58
 
-int s = 0;
-int h = 20;
-int m = 22;
+RtcDS3231<TwoWire> rtcObject(Wire);
+
+int second = 0;
+int hour = 20;
+int minute = 22;
 boolean dot=true;
 
 const uint8_t PixelPin = 3;  // make sure to set this to the correct pin, ignored for Esp8266(set to 3 by default for DMA)
@@ -41,6 +45,9 @@ void setup() {
   Serial.begin(115200);
   connectWifi();
   getInternetTime();
+  rtcObject.Begin();
+  RtcDateTime currentTime = RtcDateTime(00, 1, 1, hour, minute, second); //define date and time object
+  rtcObject.SetDateTime(currentTime); //configure the RTC with object
   delay(500);
   ledstrip.Begin();//Begin output
   ledstrip.Show();//Clear the strip for use
@@ -49,25 +56,55 @@ void setup() {
   server.begin();
 }
 
+void getRTCTime() {
+  RtcDateTime currentTime = rtcObject.GetDateTime();
+  char str[20];
+  sprintf(str, "%d/%d/%d %d:%d:%d",
+          currentTime.Year(),   //get year method
+          currentTime.Month(),  //get month method
+          currentTime.Day(),    //get day method
+          currentTime.Hour(),   //get hour method
+          currentTime.Minute(), //get minute method
+          currentTime.Second()  //get second method
+         );
+  Serial.println(str); //print the string to the serial port
+  second = currentTime.Second();
+  minute = currentTime.Minute();
+  hour = currentTime.Hour();
+}
+
 void loop() {
   server.handleClient();
-  s++;
-  if (s == 60) {
-    s = 0;
-    m++;
+  int light = analogRead(A0);
+  int ledValue = (int)(255 - (light * 255 / 1023)); 
+  ledValue = ledValue / 2; // because i never want max brightness, max 128
+  Serial.print("Light: ");
+  Serial.print(light);
+  Serial.print(" ledValue: ");
+  Serial.println(ledValue);
+  if (ledValue < 10) {
+    ledValue = 2;
   }
-  if (m == 60) {
-    m = 0;
-    h++;
+  pixel = RgbColor((uint8_t)ledValue, (uint8_t)ledValue, (uint8_t)ledValue);
+
+  second++;
+  if (second == 60) {
+    getRTCTime();
+    second = 0;
+    minute++;
   }
-  if (h == 24) {
-    h = 0;
+  if (minute == 60) {
+    minute = 0;
+    hour++;
+  }
+  if (hour == 24) {
+    hour = 0;
   }
   
-  int d0 = h / 10;
-  int d1 = h % 10;
-  int d2 = m / 10;
-  int d3 = m % 10;
+  int d0 = hour / 10;
+  int d1 = hour % 10;
+  int d2 = minute / 10;
+  int d3 = minute % 10;
   
   digitAt(0, digits[d3]);
   digitAt(1, digits[d2]);
@@ -174,13 +211,13 @@ void getInternetTime() {
         Serial.print("<");
         int i = payload.indexOf("currentDateTime");
         Serial.println("i: " + i);
-        h = payload.substring(i + 29, i + 31).toInt();
-        m = payload.substring(i + 32, i + 34).toInt();
-        Serial.print(h); Serial.print(":"); Serial.print(m);
+        hour = payload.substring(i + 29, i + 31).toInt();
+        minute = payload.substring(i + 32, i + 34).toInt();
+        Serial.print(hour); Serial.print(":"); Serial.print(minute);
         Serial.println("i: " + i);
       }
     } else {
-      Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
+      Serial.printf("[HTTP] GET... failed, error: %second\n", http.errorToString(httpCode).c_str());
     }
     http.end();
   } else {
