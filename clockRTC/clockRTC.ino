@@ -6,14 +6,23 @@
 #include "credentials.h"
 #include <Wire.h>
 #include <RtcDS3231.h>
+#include <NTPClient.h>
+#include <WiFiUdp.h>
 
 #define NUM_LEDS 58
 
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, 3600);//gmt+1
+ 
 RtcDS3231<TwoWire> rtcObject(Wire);
 
 int second = 0;
 int hour = 20;
 int minute = 22;
+int divisor = 1024;
+int r = 45;
+int g = 0;
+int b = 45;
 boolean dot=true;
 
 const uint8_t PixelPin = 3;  // make sure to set this to the correct pin, ignored for Esp8266(set to 3 by default for DMA)
@@ -44,16 +53,16 @@ void setup() {
   digitalWrite(led, LOW);
   Serial.begin(115200);
   connectWifi();
-  getInternetTime();
   rtcObject.Begin();
-  RtcDateTime currentTime = RtcDateTime(00, 1, 1, hour, minute, second); //define date and time object
-  rtcObject.SetDateTime(currentTime); //configure the RTC with object
+  getInternetTime();
   delay(500);
   ledstrip.Begin();//Begin output
   ledstrip.Show();//Clear the strip for use
   digitalWrite(led, HIGH);
   server.on("/", handleRoot);
+  server.on("/t", handleGetTime);
   server.begin();
+  timeClient.begin();
 }
 
 void getRTCTime() {
@@ -76,22 +85,31 @@ void getRTCTime() {
 void loop() {
   server.handleClient();
   int light = analogRead(A0);
-  int ledValue = (int)(255 - (light * 255 / 1023)); 
-  ledValue = ledValue / 2; // because i never want max brightness, max 128
+  float ledValue = 1 - ((float)light) / ((float)1024);
   Serial.print("Light: ");
   Serial.print(light);
   Serial.print(" ledValue: ");
   Serial.println(ledValue);
-  if (ledValue < 10) {
-    ledValue = 2;
-  }
-  pixel = RgbColor((uint8_t)ledValue, (uint8_t)ledValue, (uint8_t)ledValue);
+  int rl=r*ledValue;
+  int gl=g*ledValue;
+  int bl=b*ledValue;
+  if (rl<1)rl=1;
+  if (gl<1)gl=1;
+  if (bl<1)bl=1;
+  Serial.print(" r: ");
+  Serial.print(rl);
+  Serial.print(" g: ");
+  Serial.print(gl);
+  Serial.print(" b: ");
+  Serial.println(bl);
+
+  pixel = RgbColor(rl, gl, bl);
 
   second++;
   if (second == 60) {
-    getRTCTime();
     second = 0;
     minute++;
+    getRTCTime();
   }
   if (minute == 60) {
     minute = 0;
@@ -99,6 +117,7 @@ void loop() {
   }
   if (hour == 24) {
     hour = 0;
+    getInternetTime();
   }
   
   int d0 = hour / 10;
@@ -123,18 +142,28 @@ void loop() {
   delay(1000);
 }
 
+void handleGetTime() {
+  getInternetTime();
+  server.send(200, "text/html", "ok");
+}
+
 void handleRoot() { 
   String sr = server.arg("r");
   String sg = server.arg("g");
   String sb = server.arg("b");
+  String sl = server.arg("l");
   if (sr != "" && sg != "" && sb != "") {
-    int r = server.arg("r").toInt();
-    int g = server.arg("g").toInt();
-    int b = server.arg("b").toInt();
+    r = server.arg("r").toInt();
+    g = server.arg("g").toInt();
+    b = server.arg("b").toInt();
     Serial.print("r=");Serial.print(r);
     Serial.print(", g=");Serial.print(g);
     Serial.print(", b=");Serial.println(b);
     pixel = RgbColor(r,g,b);
+  }
+  if (sl != "") {
+    divisor = sl.toInt();
+    Serial.print("l=");Serial.println(divisor);
   }
   String html = "";
   html+="<!DOCTYPE html><html><head>";
@@ -143,9 +172,10 @@ void handleRoot() {
   html+="  <style>input{font-size:48px;}</style></head> ";
   html+="<body>";
   html+="<input onchange='update(this.jscolor)' value=\"ffcc00\" class=\"jscolor {width:800, height:600}\">";
-  html+="<br><input id='r'>";
-  html+="<br><input id='g'>";
-  html+="<br><input id='b'>";
+  html+="<br>red: <input id='r'>";
+  html+="<br>green:  <input id='g'>";
+  html+="<br>blue: <input id='b'>";
+  html+="<br>brightness divide by: <input id='l' value='4'>";
   html+="<p id='rect' style='border:1px solid gray; width:161px; height:100px;'> ";
   html+="<p> ";
   html+="<input type='button' onclick='setColor()' value='Apply'> ";
@@ -156,7 +186,8 @@ void handleRoot() {
   html+="r = document.getElementById('r').value; ";
   html+="g = document.getElementById('g').value; ";
   html+="b = document.getElementById('b').value; ";
-  html+="window.location.href = \"/?r=\" + Math.round(r) + \"&g=\" + Math.round(g) + \"&b=\" + Math.round(b) ";
+  html+="l = document.getElementById('l').value; ";
+  html+="window.location.href = \"/?r=\" + Math.round(r) + \"&g=\" + Math.round(g) + \"&b=\" + Math.round(b) + \"&l=\" + Math.round(l) ";
   html+="}";
   html+="function update(jscolor) { ";
   html+="console.log(jscolor.rgb[0]); ";
@@ -196,31 +227,12 @@ void connectWifi() {
 }
 
 void getInternetTime() {
-  WiFiClient client;
-  HTTPClient http;
-  if (http.begin(client, "http://worldclockapi.com/api/json/cet/now")) {
-    Serial.print("[HTTP] GET...\n");
-    int httpCode = http.GET();
-    if (httpCode > 0) {
-      Serial.printf("[HTTP] GET... code: %d\n", httpCode);
-      if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
-        String payload = http.getString();
-        Serial.println(payload);
-        Serial.print(">");
-        Serial.println(payload.indexOf("currentDateTime"));
-        Serial.print("<");
-        int i = payload.indexOf("currentDateTime");
-        Serial.println("i: " + i);
-        hour = payload.substring(i + 29, i + 31).toInt();
-        minute = payload.substring(i + 32, i + 34).toInt();
-        Serial.print(hour); Serial.print(":"); Serial.print(minute);
-        Serial.println("i: " + i);
-      }
-    } else {
-      Serial.printf("[HTTP] GET... failed, error: %second\n", http.errorToString(httpCode).c_str());
-    }
-    http.end();
-  } else {
-    Serial.printf("[HTTP} Unable to connect\n");
-  }
+  timeClient.update();
+  Serial.print("Got ntp time: ");
+  Serial.println(timeClient.getFormattedTime());
+  hour = timeClient.getHours();
+  minute = timeClient.getMinutes();
+  second = timeClient.getSeconds();  
+  RtcDateTime currentTime = RtcDateTime(00, 1, 1, hour, minute, second); //define date and time object
+  rtcObject.SetDateTime(currentTime); //configure the RTC with object
 }
