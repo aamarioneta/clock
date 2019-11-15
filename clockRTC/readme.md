@@ -1,1 +1,2 @@
-see here
+copy credentials.h.example to credentials.h and edit your wifi settings.
+this works for 2 leds per segment + 2 leds as separator between hous and minutes. that's 58 total. Edit NUM_LEDS for any other number of leds
