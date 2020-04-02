@@ -9,16 +9,22 @@
 #include <NTPClient.h>
 #include <WiFiUdp.h>
 
+#include <Timezone.h>    // https://github.com/JChristensen/Timezone
+// Central European Time (Frankfurt, Paris)
+TimeChangeRule CEST = {"CEST", Last, Sun, Mar, 2, 120};     // Central European Summer Time
+TimeChangeRule CET = {"CET ", Last, Sun, Oct, 3, 60};       // Central European Standard Time
+Timezone CE(CEST, CET);
+
 #define NUM_LEDS 58
 
 WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP, 3600);//gmt+1
+NTPClient timeClient(ntpUDP);
  
 RtcDS3231<TwoWire> rtcObject(Wire);
 
-int second = 0;
-int hour = 20;
-int minute = 22;
+int tSecond = 0;
+int tHour = 20;
+int tMinute = 22;
 int divisor = 1024;
 int r = 45;
 int g = 0;
@@ -72,58 +78,61 @@ void getRTCTime() {
           currentTime.Year(),   //get year method
           currentTime.Month(),  //get month method
           currentTime.Day(),    //get day method
-          currentTime.Hour(),   //get hour method
-          currentTime.Minute(), //get minute method
-          currentTime.Second()  //get second method
+          currentTime.Hour(),   //get tHour method
+          currentTime.Minute(), //get tMinute method
+          currentTime.Second()  //get tSecond method
          );
   Serial.println(str); //print the string to the serial port
-  second = currentTime.Second();
-  minute = currentTime.Minute();
-  hour = currentTime.Hour();
+  tSecond = currentTime.Second();
+  tMinute = currentTime.Minute();
+  tHour = currentTime.Hour();
 }
 
 void loop() {
   server.handleClient();
   int light = analogRead(A0);
   float ledValue = 1 - ((float)light) / ((float)1024);
+  /*
   Serial.print("Light: ");
   Serial.print(light);
   Serial.print(" ledValue: ");
   Serial.println(ledValue);
+  */
   int rl=r*ledValue;
   int gl=g*ledValue;
   int bl=b*ledValue;
   if (rl<1)rl=1;
   if (gl<1)gl=1;
   if (bl<1)bl=1;
+  /*
   Serial.print(" r: ");
   Serial.print(rl);
   Serial.print(" g: ");
   Serial.print(gl);
   Serial.print(" b: ");
   Serial.println(bl);
-
+  */
   pixel = RgbColor(rl, gl, bl);
 
-  second++;
-  if (second == 60) {
-    second = 0;
-    minute++;
+  tSecond++;
+  if (tSecond == 60) {
+    tSecond = 0;
+    tMinute++;
     getRTCTime();
   }
-  if (minute == 60) {
-    minute = 0;
-    hour++;
+  if (tMinute == 60) {
+    tMinute = 0;
+    tHour++;
   }
-  if (hour == 24) {
-    hour = 0;
+  if (tHour == 24) {
+    tHour = 0;
     getInternetTime();
   }
   
-  int d0 = hour / 10;
-  int d1 = hour % 10;
-  int d2 = minute / 10;
-  int d3 = minute % 10;
+  int d0 = tHour / 10;
+  int d1 = tHour % 10;
+  int d2 = tMinute / 10;
+  int d3 = tMinute % 10;
   
   digitAt(0, digits[d3]);
   digitAt(1, digits[d2]);
@@ -230,9 +239,28 @@ void getInternetTime() {
   timeClient.update();
   Serial.print("Got ntp time: ");
   Serial.println(timeClient.getFormattedTime());
-  hour = timeClient.getHours();
-  minute = timeClient.getMinutes();
-  second = timeClient.getSeconds();  
-  RtcDateTime currentTime = RtcDateTime(00, 1, 1, hour, minute, second); //define date and time object
+  time_t utc = timeClient.getEpochTime();
+  setSummerTime(utc, "Berlin");
+  RtcDateTime currentTime = RtcDateTime(00, 1, 1, tHour, tMinute, tSecond); //define date and time object
   rtcObject.SetDateTime(currentTime); //configure the RTC with object
+}
+
+// given a Timezone object, UTC and a string description, convert and print local time with time zone
+void setSummerTime(time_t utc, const char *descr)
+{
+    char buf[40];
+    char m[4];    // temporary storage for month string (DateStrings.cpp uses shared buffer)
+    TimeChangeRule *tcr;        // pointer to the time change rule, use to get the TZ abbrev
+
+    time_t t = CE.toLocal(utc, &tcr);
+    strcpy(m, monthShortStr(month(t)));
+    sprintf(buf, "%.2d:%.2d:%.2d %s %.2d %s %d %s",
+        hour(t), minute(t), second(t), dayShortStr(weekday(t)), day(t), m, year(t), tcr -> abbrev);
+    Serial.print("Summer Time: ");
+    Serial.print(buf);
+    Serial.print(' ');
+    Serial.println(descr);
+    tHour = hour(t);
+    tMinute = minute(t);
+    tSecond = second(t);  
 }
